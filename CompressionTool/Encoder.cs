@@ -13,7 +13,7 @@
             //}
 
             var huffmanTree = BuildTree(charFrequency);
-            PrintCodes(huffmanTree, "");
+            //PrintCodes(huffmanTree, "");
         }
 
         private LeafNode BuildTree(List<KeyValuePair<char, int>> characterFrequencies)
@@ -37,7 +37,6 @@
                 top = new LeafNode { Character = '$', Frequency = left.Frequency + right.Frequency, LeftNode = left, RightNode = right };
 
                 minHeap.Add(top);
-
                 minHeap.Sort((pair1, pair2) => pair1.Frequency.CompareTo(pair2.Frequency));
             }
 

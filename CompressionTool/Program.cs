@@ -1,17 +1,29 @@
-﻿using System.Reflection;
-
-namespace CompressionTool
+﻿namespace CompressionTool
 {
-    internal class Program
+    internal static class Program
     {
-        public static void Main(string[] args)
+        public static async Task Main(string[] args)
         {
+            var decoder = new Decoder();
             var encoder = new Encoder();
-            var path = Path.Combine(Path.GetDirectoryName(Assembly.GetExecutingAssembly().Location), "text.txt");
+            var spinner = new ConsoleSpinner();
+            var spinnerTask = Task.Run(spinner.Start);
 
-            encoder.Encode(path);
+            try
+            {
+                Console.WriteLine("Encoding");
+                await encoder.Encode();
 
+                Console.WriteLine("Decoding");
+                await decoder.Decode();
+            }
+            finally
+            {
+                spinner.Stop();
+                await spinnerTask;
+            }
 
+            Console.WriteLine("Done");
             Console.ReadLine();
         }
     }

@@ -1,94 +1,200 @@
-﻿namespace CompressionTool
+﻿using System.Collections;
+using System.Reflection;
+using System.Text;
+
+namespace CompressionTool
 {
     internal class Encoder
     {
-        public void Encode(string path)
+        private readonly string _compressed;
+        private readonly string _input;
+
+        public Encoder()
         {
-            var charFrequency = GetCharacterFrequency(path);
+            _input = Path.Combine(Path.GetDirectoryName(Assembly.GetExecutingAssembly().Location), "input.txt");
+            _compressed = Path.Combine(Path.GetDirectoryName(Assembly.GetExecutingAssembly().Location), "compressed.txt");
 
-            // Display Character Frequency List
-            //foreach (var frequency in charFrequency)
-            //{
-            //    Console.WriteLine($"{frequency.Key}: {frequency.Value}");
-            //}
-
-            var huffmanTree = BuildTree(charFrequency);
-            //PrintCodes(huffmanTree, "");
+            if (File.Exists(_compressed))
+            {
+                File.Delete(_compressed);
+            }
         }
 
-        private LeafNode BuildTree(List<KeyValuePair<char, int>> characterFrequencies)
+        public async Task Encode()
         {
-            var top = new LeafNode();
-            var minHeap = new List<LeafNode>();
+            // 1. Get char frequencies
+            var frequencies = await GetFrequencies();
 
-            foreach (var character in characterFrequencies)
-            {
-                minHeap.Add(new LeafNode { Character = character.Key, Frequency = character.Value });
-            }
+            // 2. Build tree based on frequencies
+            var tree = BuildTree(frequencies);
 
-            while (minHeap.Count != 1 && minHeap.Count > 0)
-            {
-                var left = minHeap[0];
-                minHeap.RemoveAt(0);
+            // 3. Build char codes based on tree
+            var codes = BuildCodes(tree);
 
-                var right = minHeap[0];
-                minHeap.RemoveAt(0);
+            // 4. Build coded string representation of file
+            var codedString = await BuildCodedString(codes);
 
-                top = new LeafNode { Character = '$', Frequency = left.Frequency + right.Frequency, LeftNode = left, RightNode = right };
+            // 5. Compress codedString into byte[]
+            var compressedBytes = Compress(codedString);
 
-                minHeap.Add(top);
-                minHeap.Sort((pair1, pair2) => pair1.Frequency.CompareTo(pair2.Frequency));
-            }
+            // 6. Write frequencies to compression as the header
+            await WriteFileHeader(frequencies);
 
-            return top;
+            // 7. Write compressed text
+            await WriteEncodedData(compressedBytes);
         }
 
-        private List<KeyValuePair<char, int>> GetCharacterFrequency(string path)
+        private async Task<string> BuildCodedString(Dictionary<char, string> codes)
         {
-            var dictionary = new Dictionary<char, int>();
+            var stringBuilder = new StringBuilder();
 
-            if (File.Exists(path))
+            if (File.Exists(_input))
             {
-                using StreamReader read = new(path);
                 string? line;
+                using StreamReader read = new(_input);
 
-                while ((line = read.ReadLine()) != null)
+                while ((line = await read.ReadLineAsync()) != null)
                 {
                     foreach (var key in line)
                     {
-                        if (dictionary.TryGetValue(key, out int value))
-                        {
-                            dictionary[key] = value + 1;
-                        }
-                        else
-                        {
-                            dictionary.Add(key, 1);
-                        }
+                        stringBuilder.Append(codes.First(x => x.Key == key).Value);
                     }
                 }
             }
 
-            var list = dictionary.ToList();
-
-            list.Sort((pair1, pair2) => pair1.Value.CompareTo(pair2.Value));
-
-            return list;
+            return stringBuilder.ToString();
         }
 
-        private void PrintCodes(LeafNode root, string str)
+        private Dictionary<char, string> BuildCodes(HuffmanNode root)
+        {
+            var codes = new Dictionary<char, string>();
+            BuildCodes(codes, root);
+
+            return codes;
+        }
+
+        private void BuildCodes(Dictionary<char, string> codes, HuffmanNode root, string value = "")
         {
             if (root == null)
             {
                 return;
             }
 
-            if (root.Character != '$')
+            if (root.Character != '^')
             {
-                Console.WriteLine(root.Character + ": " + str);
+                codes.Add(root.Character, value);
             }
 
-            PrintCodes(root.LeftNode, str + "0");
-            PrintCodes(root.RightNode, str + "1");
+            BuildCodes(codes, root.LeftNode, value + "0");
+            BuildCodes(codes, root.RightNode, value + "1");
+        }
+
+        private HuffmanNode BuildTree(Dictionary<char, int> frequencies)
+        {
+            var tree = new List<HuffmanNode>();
+
+            foreach (var character in frequencies)
+            {
+                tree.Add(new HuffmanNode { Character = character.Key, Frequency = character.Value });
+            }
+
+            tree.Sort();
+
+            while (tree.Count != 1 && tree.Count > 0)
+            {
+                var left = tree[0];
+                tree.RemoveAt(0);
+
+                var right = tree[0];
+                tree.RemoveAt(0);
+
+                tree.Add(new HuffmanNode { Character = '^', Frequency = left.Frequency + right.Frequency, LeftNode = left, RightNode = right });
+                tree.Sort();
+            }
+
+            return tree[0];
+        }
+
+        private byte[] Compress(string text)
+        {
+            var byteList = new List<byte>();
+
+            while (text.Length >= 8)
+            {
+                byteList.Add(Convert.ToByte(text[..8], 2));
+
+                text = text[8..];
+            }
+
+            if (!string.IsNullOrEmpty(text))
+            {
+                byteList.Add(Convert.ToByte(text.Trim(), 2));
+            }
+
+            return [.. byteList];
+        }
+
+        private async Task<Dictionary<char, int>> GetFrequencies()
+        {
+            var frequencies = new Dictionary<char, int>();
+
+            if (File.Exists(_input))
+            {
+                string? line;
+                using StreamReader read = new(_input);
+
+                while ((line = await read.ReadLineAsync()) != null)
+                {
+                    foreach (var key in line)
+                    {
+                        if (frequencies.TryGetValue(key, out int value))
+                        {
+                            frequencies[key] = value + 1;
+                        }
+                        else
+                        {
+                            frequencies.Add(key, 1);
+                        }
+                    }
+                }
+            }
+
+            return frequencies;
+        }
+
+        private string ToBitString(BitArray bits)
+        {
+            var sb = new StringBuilder();
+
+            for (int i = 0; i < bits.Count; i++)
+            {
+                char c = bits[i] ? '1' : '0';
+                sb.Append(c);
+            }
+
+            return sb.ToString();
+        }
+
+        private async Task WriteEncodedData(byte[] text)
+        {
+            await using FileStream stream = new(_compressed, FileMode.Append);
+            await stream.WriteAsync(text);
+        }
+
+        private async Task WriteFileHeader(Dictionary<char, int> frequencies)
+        {
+            if (File.Exists(_input))
+            {
+                // Write out frequencies in header
+                await using StreamWriter compressedFile = new(_compressed, true);
+                foreach (var item in frequencies.OrderBy(x => x.Value))
+                {
+                    await compressedFile.WriteLineAsync($"{item.Key}{item.Value}");
+                }
+
+                // Write end of header
+                await compressedFile.WriteLineAsync("|*|");
+            }
         }
     }
 }

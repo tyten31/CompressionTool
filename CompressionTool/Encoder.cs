@@ -1,18 +1,26 @@
 ﻿using System.Collections;
 using System.Reflection;
 using System.Text;
+using static System.Net.Mime.MediaTypeNames;
 
 namespace CompressionTool
 {
     internal class Encoder
     {
         private readonly string _compressed;
+        private readonly string _header;
         private readonly string _input;
 
         public Encoder()
         {
             _input = Path.Combine(Path.GetDirectoryName(Assembly.GetExecutingAssembly().Location), "input.txt");
-            _compressed = Path.Combine(Path.GetDirectoryName(Assembly.GetExecutingAssembly().Location), "compressed.txt");
+            _header = Path.Combine(Path.GetDirectoryName(Assembly.GetExecutingAssembly().Location), "header.txt");
+            _compressed = Path.Combine(Path.GetDirectoryName(Assembly.GetExecutingAssembly().Location), "compressed.comp");
+
+            if (File.Exists(_header))
+            {
+                File.Delete(_header);
+            }
 
             if (File.Exists(_compressed))
             {
@@ -38,7 +46,7 @@ namespace CompressionTool
             var compressedBytes = Compress(codedString);
 
             // 6. Write frequencies to compression as the header
-            await WriteFileHeader(frequencies);
+            await WriteFileHeader(frequencies, codedString.Length);
 
             // 7. Write compressed text
             await WriteEncodedData(compressedBytes);
@@ -55,6 +63,8 @@ namespace CompressionTool
 
                 while ((line = await read.ReadLineAsync()) != null)
                 {
+                    line += "\\n\\r";
+
                     foreach (var key in line)
                     {
                         stringBuilder.Append(codes.First(x => x.Key == key).Value);
@@ -145,6 +155,8 @@ namespace CompressionTool
 
                 while ((line = await read.ReadLineAsync()) != null)
                 {
+                    line += "\\n\\r";
+
                     foreach (var key in line)
                     {
                         if (frequencies.TryGetValue(key, out int value))
@@ -181,19 +193,20 @@ namespace CompressionTool
             await stream.WriteAsync(text);
         }
 
-        private async Task WriteFileHeader(Dictionary<char, int> frequencies)
+        private async Task WriteFileHeader(Dictionary<char, int> frequencies, int codesStringLength)
         {
             if (File.Exists(_input))
             {
                 // Write out frequencies in header
-                await using StreamWriter compressedFile = new(_compressed, true);
+                await using StreamWriter compressedFile = new(_header, true);
                 foreach (var item in frequencies.OrderBy(x => x.Value))
                 {
                     await compressedFile.WriteLineAsync($"{item.Key}{item.Value}");
                 }
 
-                // Write end of header
+                // Write coded string length
                 await compressedFile.WriteLineAsync("|*|");
+                await compressedFile.WriteLineAsync($"{codesStringLength}");
             }
         }
     }

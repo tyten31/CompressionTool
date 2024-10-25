@@ -6,20 +6,15 @@ namespace CompressionTool
 {
     internal class Decoder
     {
-        private readonly Dictionary<char, string> _codes;
         private readonly string _compressed;
-        private readonly Dictionary<char, int> _frequencies;
+        private readonly string _header;
         private readonly string _output;
-        private readonly List<HuffmanNode> _tree;
-        private string _encodedString;
 
         public Decoder()
         {
             _output = Path.Combine(Path.GetDirectoryName(Assembly.GetExecutingAssembly().Location), "output.txt");
-            _compressed = Path.Combine(Path.GetDirectoryName(Assembly.GetExecutingAssembly().Location), "compressed.txt");
-            _codes = [];
-            _tree = [];
-            _frequencies = [];
+            _header = Path.Combine(Path.GetDirectoryName(Assembly.GetExecutingAssembly().Location), "header.txt");
+            _compressed = Path.Combine(Path.GetDirectoryName(Assembly.GetExecutingAssembly().Location), "compressed.comp");
 
             if (File.Exists(_output))
             {
@@ -29,17 +24,22 @@ namespace CompressionTool
 
         public async Task Decode()
         {
-            // 1. Get the character frequencies from the file header
-            var frequencies = await GetFrequencies();
+            var header = await File.ReadAllLinesAsync(_header);
 
-            // 2. Get the compressed text
-            var codedString = await GetCodedString();
+            // 1. Get the character frequencies from the header file
+            var frequencies = GetFrequencies(header);
 
-            // 3. Build tree based on frequencies
+            // 2. Get the code string length from the header file
+            var length = GetCodedStringLength(header);
+
+            // 3. Get the coded string from compressed file
+            var codedString = await GetCodedString(length);
+
+            // 4. Build tree based on frequencies
             var tree = BuildTree(frequencies);
 
-            // 4. Write decoded data
-            //await WriteDecodedData(tree);
+            // 5. Write decoded data
+            await WriteDecodedData(tree, codedString);
         }
 
         private HuffmanNode BuildTree(Dictionary<char, int> frequencies)
@@ -48,77 +48,98 @@ namespace CompressionTool
 
             foreach (var character in frequencies)
             {
-                tree.Add(new HuffmanNode { Character = character.Key, Frequency = character.Value });
+                tree.Add(new HuffmanNode
+                {
+                    Character = character.Key,
+                    Frequency = character.Value
+                });
             }
 
             tree.Sort();
 
             while (tree.Count != 1 && tree.Count > 0)
             {
-                var left = tree[0];
-                tree.RemoveAt(0);
+                var left = tree[0]; tree.RemoveAt(0);
+                var right = tree[0]; tree.RemoveAt(0);
 
-                var right = tree[0];
-                tree.RemoveAt(0);
+                tree.Add(new HuffmanNode
+                {
+                    Character = '^',
+                    Frequency = left.Frequency + right.Frequency,
+                    LeftNode = left,
+                    RightNode = right
+                });
 
-                tree.Add(new HuffmanNode { Character = '^', Frequency = left.Frequency + right.Frequency, LeftNode = left, RightNode = right });
                 tree.Sort();
             }
 
             return tree[0];
         }
 
-        private async Task<string> GetCodedString()
+        private async Task<string> GetCodedString(int length)
         {
-            var byteString = string.Empty;
+            var byteString = new StringBuilder();
+
             if (File.Exists(_compressed))
             {
-                string? line;
-                var header = true;
+                await using FileStream fileStream = File.OpenRead(_compressed);
+                byte[] buffer = new byte[fileStream.Length];
+                fileStream.Read(buffer, 0, buffer.Length);
 
-                using StreamReader read = new(_compressed);
-
-                while ((line = await read.ReadLineAsync()) != null)
+                foreach (byte b in buffer)
                 {
-                    if (line.Equals("|*|"))
-                    {
-                        header = false;
-                    }
-                    else if (!header)
-                    {
-                        byteString += line;
-                    }
+                    byteString.Append(ToBitString(Reverse(new BitArray(new byte[] { b }))));
                 }
             }
 
-            var a1 = Encoding.ASCII.GetBytes(byteString.ToString().Trim()).Reverse().ToArray();
-            var a2 = new BitArray(a1);
-            var a3 = ToBitString(a2);
+            // Trim off extra characters from last byte
+            var readString = byteString.ToString();
+            var lastByte = readString.Substring(readString.Length - 8);
+            var diff = readString.Length - length;
 
-            return ToBitString(new BitArray(Encoding.ASCII.GetBytes(byteString.ToString().Trim())));
+            lastByte = lastByte[diff..];
+            readString = readString.Remove(readString.Length - 8);
+            readString += lastByte;
+
+            return readString;
         }
 
-        private async Task<Dictionary<char, int>> GetFrequencies()
+        private int GetCodedStringLength(string[] header)
+        {
+            var index = header.ToList().FindIndex(x => x.Equals("|*|"));
+
+            if (index < 0)
+            {
+                return 0;
+            }
+
+            return Convert.ToInt32(header[index + 1]);
+        }
+
+        private Dictionary<char, int> GetFrequencies(string[] header)
         {
             var frequencies = new Dictionary<char, int>();
+            var index = header.ToList().FindIndex(x => x.Equals("|*|"));
 
-            if (File.Exists(_compressed))
+            for (int i = 0; i < index; i++)
             {
-                string? line;
-                using StreamReader read = new(_compressed);
-
-                while ((line = await read.ReadLineAsync()) != null)
-                {
-                    if (line.Equals("|*|"))
-                    {
-                        break;
-                    }
-
-                    frequencies.Add(line[0].ToString()[0], Convert.ToInt32(line[1..]));
-                }
+                frequencies.Add(header[i][0], Convert.ToInt32(header[i][1..]));
             }
 
             return frequencies;
+        }
+
+        private BitArray Reverse(BitArray array)
+        {
+            var length = array.Length;
+            var mid = (length / 2);
+
+            for (int i = 0; i < mid; i++)
+            {
+                (array[length - i - 1], array[i]) = (array[i], array[length - i - 1]);
+            }
+
+            return array;
         }
 
         private string ToBitString(BitArray bits)
@@ -134,12 +155,12 @@ namespace CompressionTool
             return sb.ToString();
         }
 
-        private async Task WriteDecodedData(HuffmanNode root)
+        private async Task WriteDecodedData(HuffmanNode root, string codedString)
         {
             var text = new StringBuilder();
             var currentNode = root;
 
-            foreach (var character in _encodedString)
+            foreach (var character in codedString)
             {
                 if (character.Equals('0'))
                 {

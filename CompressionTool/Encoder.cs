@@ -129,16 +129,16 @@ namespace CompressionTool
         {
             var byteList = new List<byte>();
 
-            while (text.Length >= 8)
+            foreach (var chunk in text.Chunk(8))
             {
-                byteList.Add(Convert.ToByte(text[..8], 2));
+                var chunckString = string.Empty;
 
-                text = text[8..];
-            }
+                foreach (char c in chunk)
+                {
+                    chunckString += c;
+                }
 
-            if (!string.IsNullOrEmpty(text))
-            {
-                byteList.Add(Convert.ToByte(text.Trim(), 2));
+                byteList.Add(Convert.ToByte(new string(chunckString), 2));
             }
 
             return [.. byteList];
